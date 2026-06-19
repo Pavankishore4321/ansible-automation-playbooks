@@ -1,0 +1,109 @@
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Playbook: Deploy Angular Frontend to Nginx
+# Project:  AspTax, P-Collab (Incresol Software Services)
+# Usage:    ansible-playbook playbooks/deploy-angular-nginx.yml
+#           --extra-vars "env=dev app_name=asptax-web"
+# ─────────────────────────────────────────────────────────────────────────────
+
+- name: Deploy Angular App to Nginx Web Server
+  hosts: webservers
+  become: yes
+
+  vars:
+    app_name: "asptax-web"
+    env: "dev"
+    dist_source: "/var/lib/jenkins/workspace/{{ app_name }}/dist/{{ app_name }}"
+    nginx_web_root: "/var/www/html/{{ app_name }}"
+    nginx_config_path: "/etc/nginx/sites-available/{{ app_name }}"
+    nginx_enabled_path: "/etc/nginx/sites-enabled/{{ app_name }}"
+    backup_dir: "/var/backups/{{ app_name }}"
+
+  tasks:
+
+    - name: Ensure Nginx is installed
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Ensure Nginx is running
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Create backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup existing deployment if present
+      shell: |
+        if [ -d "{{ nginx_web_root }}" ]; then
+          cp -r {{ nginx_web_root }} \
+            {{ backup_dir }}/{{ app_name }}-backup-$(date +%Y%m%d%H%M)
+          echo "Backup created."
+        else
+          echo "No existing deployment to backup."
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Create Nginx web root directory
+      file:
+        path: "{{ nginx_web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+
+    - name: Copy Angular dist files to Nginx web root
+      synchronize:
+        src: "{{ dist_source }}/"
+        dest: "{{ nginx_web_root }}/"
+        delete: yes
+        recursive: yes
+
+    - name: Set correct ownership on web root
+      file:
+        path: "{{ nginx_web_root }}"
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Deploy Nginx site configuration
+      template:
+        src: ../roles/webserver/templates/nginx-angular.conf.j2
+        dest: "{{ nginx_config_path }}"
+        mode: '0644'
+      notify: Reload Nginx
+
+    - name: Enable site in Nginx
+      file:
+        src: "{{ nginx_config_path }}"
+        dest: "{{ nginx_enabled_path }}"
+        state: link
+      notify: Reload Nginx
+
+    - name: Remove default Nginx site if present
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload Nginx
+
+    - name: Validate Nginx configuration
+      command: nginx -t
+      register: nginx_test
+      changed_when: false
+
+    - name: Show Nginx config test result
+      debug:
+        msg: "{{ nginx_test.stderr }}"
+
+  handlers:
+    - name: Reload Nginx
+      service:
+        name: nginx
+        state: reloaded

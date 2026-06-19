@@ -1,0 +1,104 @@
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Playbook: Deploy Spring Boot Application to Tomcat 9
+# Project:  Multi-client deployments — Nagpur Metro, Aragen, Kaveri Seeds,
+#           Sonic Biochem, Daimler (Incresol Software Services)
+# Usage:    ansible-playbook playbooks/deploy-springboot-tomcat.yml
+#           --extra-vars "env=prod app_name=my-app"
+# ─────────────────────────────────────────────────────────────────────────────
+
+- name: Deploy Spring Boot App to Tomcat
+  hosts: appservers
+  become: yes
+
+  vars:
+    app_name: "my-springboot-app"
+    env: "prod"
+    jar_source: "/var/lib/jenkins/workspace/{{ app_name }}/target/{{ app_name }}.jar"
+    tomcat_dir: "/opt/tomcat/webapps"
+    tomcat_service: "tomcat"
+    java_home: "/usr/lib/jvm/java-8-openjdk-amd64"
+    backup_dir: "/var/backups/{{ app_name }}"
+
+  tasks:
+
+    - name: Ensure Java 8 is installed
+      apt:
+        name: openjdk-8-jdk
+        state: present
+        update_cache: yes
+
+    - name: Verify Java version
+      command: java -version
+      register: java_version
+      changed_when: false
+
+    - name: Show Java version
+      debug:
+        msg: "{{ java_version.stderr }}"
+
+    - name: Create backup directory
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup existing JAR if present
+      shell: |
+        if [ -f "{{ tomcat_dir }}/{{ app_name }}.jar" ]; then
+          cp {{ tomcat_dir }}/{{ app_name }}.jar \
+            {{ backup_dir }}/{{ app_name }}-backup-$(date +%Y%m%d%H%M).jar
+          echo "Backup created."
+        else
+          echo "No existing JAR to backup."
+        fi
+      args:
+        executable: /bin/bash
+
+    - name: Stop Tomcat service
+      service:
+        name: "{{ tomcat_service }}"
+        state: stopped
+      ignore_errors: yes
+
+    - name: Wait for Tomcat to fully stop
+      wait_for:
+        port: 8080
+        state: stopped
+        timeout: 30
+      ignore_errors: yes
+
+    - name: Copy new JAR to Tomcat webapps
+      copy:
+        src: "{{ jar_source }}"
+        dest: "{{ tomcat_dir }}/{{ app_name }}.jar"
+        owner: tomcat
+        group: tomcat
+        mode: '0644'
+
+    - name: Start Tomcat service
+      service:
+        name: "{{ tomcat_service }}"
+        state: started
+        enabled: yes
+
+    - name: Wait for Tomcat to start (port 8080)
+      wait_for:
+        port: 8080
+        state: started
+        timeout: 60
+
+    - name: Run health check on deployed app
+      uri:
+        url: "http://localhost:8080/{{ app_name }}/actuator/health"
+        method: GET
+        status_code: 200
+        timeout: 30
+      register: health_check
+      retries: 5
+      delay: 10
+      until: health_check.status == 200
+
+    - name: Show health check result
+      debug:
+        msg: "App is UP. Status: {{ health_check.status }}"

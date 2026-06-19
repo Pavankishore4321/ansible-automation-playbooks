@@ -1,0 +1,110 @@
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Playbook: Install MongoDB and Configure Replica Set
+# Project:  Node Application High-Availability Deployment (Incresol)
+# Setup:    3-node replica set — 1 Primary, 1 Secondary, 1 Arbiter
+# Usage:    ansible-playbook playbooks/setup-mongodb-replica.yml
+# ─────────────────────────────────────────────────────────────────────────────
+
+- name: Install MongoDB on all nodes
+  hosts: mongodb_nodes
+  become: yes
+
+  vars:
+    mongodb_version: "6.0"
+    mongodb_port: 27017
+    replica_set_name: "rs0"
+    mongodb_data_dir: "/var/lib/mongodb"
+    mongodb_log_dir: "/var/log/mongodb"
+
+  tasks:
+
+    - name: Import MongoDB GPG key
+      apt_key:
+        url: https://www.mongodb.org/static/pgp/server-6.0.asc
+        state: present
+
+    - name: Add MongoDB repository
+      apt_repository:
+        repo: "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse"
+        state: present
+
+    - name: Install MongoDB
+      apt:
+        name: mongodb-org
+        state: present
+        update_cache: yes
+
+    - name: Ensure MongoDB data directory exists
+      file:
+        path: "{{ mongodb_data_dir }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: '0755'
+
+    - name: Deploy MongoDB configuration with replica set
+      template:
+        src: ../roles/database/templates/mongod.conf.j2
+        dest: /etc/mongod.conf
+        mode: '0644'
+      notify: Restart MongoDB
+
+    - name: Allow MongoDB port through UFW
+      ufw:
+        rule: allow
+        port: "{{ mongodb_port }}"
+        proto: tcp
+
+    - name: Start and enable MongoDB
+      service:
+        name: mongod
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Restart MongoDB
+      service:
+        name: mongod
+        state: restarted
+
+# ── INITIATE REPLICA SET (run only on primary node) ──────────────────────────
+- name: Initiate MongoDB Replica Set
+  hosts: mongodb_primary
+  become: yes
+
+  vars:
+    replica_set_name: "rs0"
+
+  tasks:
+
+    - name: Wait for MongoDB to be ready
+      wait_for:
+        port: 27017
+        state: started
+        timeout: 60
+
+    - name: Initiate replica set
+      shell: |
+        mongosh --quiet --eval '
+          rs.initiate({
+            _id: "{{ replica_set_name }}",
+            members: [
+              { _id: 0, host: "mongo-primary:27017",   priority: 2 },
+              { _id: 1, host: "mongo-secondary:27017", priority: 1 },
+              { _id: 2, host: "mongo-arbiter:27017",   arbiterOnly: true }
+            ]
+          })
+        '
+      register: rs_init
+      changed_when: "'already initialized' not in rs_init.stdout"
+      ignore_errors: yes
+
+    - name: Show replica set status
+      shell: mongosh --quiet --eval 'rs.status().ok'
+      register: rs_status
+      changed_when: false
+
+    - name: Print replica set status
+      debug:
+        msg: "Replica set status (1 = OK): {{ rs_status.stdout }}"
