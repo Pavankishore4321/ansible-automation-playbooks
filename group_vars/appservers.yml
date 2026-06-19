@@ -1,0 +1,8 @@
+---
+# Variables for appserver group
+# Applied to: Spring Boot / Tomcat servers
+
+java_home: "/usr/lib/jvm/java-8-openjdk-amd64"
+tomcat_dir: "/opt/tomcat/webapps"
+tomcat_service: "tomcat"
+app_port: 8080

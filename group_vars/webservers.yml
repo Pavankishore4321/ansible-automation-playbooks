@@ -1,0 +1,8 @@
+---
+# Variables for webserver group
+# Applied to: AspTax, P-Collab Nginx servers
+
+server_name: "your-domain.com"
+app_port: 3000
+nginx_web_root: "/var/www/html"
+ssl_enabled: false
