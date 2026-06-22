@@ -242,4 +242,4 @@ ansible-playbook playbooks/deploy-angular-nginx.yml \
 DevOps & Cloud Engineer | 3+ Years Experience
 AWS Certified Solutions Architect – Associate | AWS Certified Cloud Practitioner
 
-[LinkedIn](https://www.linkedin.com/in/nakka-pavan-kishore-103226221/)
+[LinkedIn](https://www.linkedin.com/in/nakka-pavan-kishore)
